@@ -1,0 +1,59 @@
+# Dependencies for local development. The API itself runs on the host with
+# `uv run uvicorn ...` so that reloads are instant; `docker compose --profile api up`
+# additionally runs the containerised service, which is what CI builds.
+#
+# Ports are published on localhost only — these containers hold no real data, but a
+# Postgres reachable from the network with a guessable password is a bad default.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflow
+      POSTGRES_DB: taskflow
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone returns true while the server is still doing its first-boot
+      # initialisation, so the user and database are named explicitly.
+      test: ["CMD-SHELL", "pg_isready -U taskflow -d taskflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    # No persistence: this Redis only holds rate-limit counters, which are worthless
+    # after a restart. Saving them would cost I/O on every window for nothing.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+    environment:
+      ENVIRONMENT: local
+      DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: change-me-this-value-is-public-and-fake
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
