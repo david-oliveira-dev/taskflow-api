@@ -62,7 +62,7 @@ jobs:
           docker run -d --name taskflow \
             -e DATABASE_URL='postgresql+asyncpg://u:p@localhost:5432/d' \
             -e REDIS_URL='redis://localhost:6379/0' \
-            -e JWT_SECRET='ci-only-value' \
+            -e JWT_SECRET='ci-only-value-long-enough-for-the-32-byte-floor' \
             -p 8000:8000 taskflow-api:ci
           # The liveness probe touches no dependency, so it must answer even with no
           # Postgres and no Redis anywhere. If this fails, /health is doing too much.

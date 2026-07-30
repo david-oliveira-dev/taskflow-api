@@ -1,10 +1,15 @@
 """Application factory and ASGI entry point."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from taskflow_api import __version__
+from taskflow_api.api.auth import router as auth_router
 from taskflow_api.api.health import router as health_router
 from taskflow_api.config import Settings, get_settings
+from taskflow_api.db.session import create_engine, create_session_factory
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -19,7 +24,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     Returns:
         A configured FastAPI application.
     """
-    settings = settings or get_settings()
+    resolved = settings or get_settings()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Own the engine for the life of the process.
+
+        One engine, one connection pool, created at startup and disposed at shutdown.
+        Creating an engine per request would open a new pool per request, which exhausts
+        the database's connection limit under any real load.
+        """
+        engine = create_engine(resolved)
+        app.state.settings = resolved
+        app.state.engine = engine
+        app.state.session_factory = create_session_factory(engine)
+        try:
+            yield
+        finally:
+            await engine.dispose()
 
     app = FastAPI(
         title="TaskFlow API",
@@ -28,11 +50,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Projects and tasks over a layered service, used to demonstrate audit trails, "
             "idempotency and rate limiting."
         ),
+        lifespan=lifespan,
         # Interactive docs are a foot-gun in production and a feature everywhere else.
-        docs_url=None if settings.is_production else "/docs",
+        docs_url=None if resolved.is_production else "/docs",
         redoc_url=None,
-        openapi_url=None if settings.is_production else "/openapi.json",
+        openapi_url=None if resolved.is_production else "/openapi.json",
     )
 
     app.include_router(health_router)
+    app.include_router(auth_router)
     return app

@@ -31,3 +31,11 @@ class InvalidCursorError(TaskFlowError):
 
     Cursors arrive from user input, so a malformed one is an ordinary 4xx, not a bug.
     """
+
+
+class AuthenticationError(TaskFlowError):
+    """The caller could not be identified: bad credentials, or a bad token."""
+
+
+class AuthorizationError(TaskFlowError):
+    """The caller is known but not allowed to do this."""

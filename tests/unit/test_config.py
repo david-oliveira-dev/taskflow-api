@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from taskflow_api.config import Settings, _mask_password
 
-_SECRET = "a-distinctive-signing-key"
+_SECRET = "a-distinctive-signing-key-of-sufficient-length"
 _BASE = {
     "database_url": "postgresql+asyncpg://taskflow:hunter2@localhost:5432/taskflow",
     "redis_url": "redis://localhost:6379/0",
@@ -91,6 +91,17 @@ def test_token_ttl_is_bounded(ttl: int) -> None:
     """The expiry window is the only revocation mechanism, so it cannot be absurd."""
     with pytest.raises(ValidationError):
         _settings(access_token_ttl_minutes=ttl)
+
+
+@pytest.mark.parametrize("weak", ["short", "x" * 31])
+def test_signing_key_shorter_than_32_bytes_is_refused(weak: str) -> None:
+    """RFC 7518 section 3.2: an HMAC key shorter than its hash weakens the signature.
+
+    PyJWT only warns at runtime. Refusing to start is better than serving traffic with a
+    signature that looks valid and is not.
+    """
+    with pytest.raises(ValidationError):
+        _settings(jwt_secret=weak)
 
 
 def test_is_production_reflects_environment() -> None:

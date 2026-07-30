@@ -46,7 +46,7 @@ services:
       ENVIRONMENT: local
       DATABASE_URL: postgresql+asyncpg://taskflow:taskflow@postgres:5432/taskflow
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: change-me-this-value-is-public-and-fake
+      JWT_SECRET: change-me-this-placeholder-is-public-and-fake-and-long-enough
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

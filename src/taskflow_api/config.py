@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     redis_url: RedisDsn = Field(description="Redis DSN used for rate limiting.")
 
     # Secret, never logged: SecretStr keeps it out of reprs and structured log payloads.
-    jwt_secret: SecretStr = Field(description="HMAC key for signing access tokens.")
+    # The 32-byte floor is RFC 7518 section 3.2: an HMAC key shorter than the hash it feeds
+    # weakens the signature, and PyJWT warns about it at runtime. Better to refuse to start
+    # than to serve traffic with a signature that looks fine and is not.
+    jwt_secret: SecretStr = Field(
+        min_length=32, description="HMAC key for signing access tokens (>= 32 bytes)."
+    )
     jwt_algorithm: Literal["HS256"] = "HS256"
     # Short-lived on purpose: this service has no refresh token and no revocation, so the
     # expiry window *is* the security boundary. See docs/adr/ (JWT decision).

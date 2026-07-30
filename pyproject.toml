@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
+    "pydantic[email]>=2.9",
     "pydantic-settings>=2.6",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
@@ -33,6 +33,7 @@ dependencies = [
     # PyJWT over python-jose: actively maintained, and it does not drag in a second
     # cryptography stack we would never use. See docs/adr/0001-framework-and-stack.md.
     "pyjwt>=2.10",
+    "python-multipart>=0.0.32",
 ]
 
 [project.urls]
@@ -119,3 +120,8 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["src/taskflow_api"]
+# SQLAlchemy's asyncio layer bridges to sync code through greenlets, and anyio runs the
+# ASGI app in a worker thread. Without both, every request handler executed through the
+# test client is reported as uncovered even though it plainly ran — coverage numbers that
+# understate reality are worse than none, because they invite writing redundant tests.
+concurrency = ["thread", "greenlet"]
