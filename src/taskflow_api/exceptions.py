@@ -16,3 +16,18 @@ class ConfigurationError(TaskFlowError):
     Raised at startup rather than on first use: a missing secret should stop the process,
     not surface as a confusing 500 on the first request that happens to need it.
     """
+
+
+class NotFoundError(TaskFlowError):
+    """A referenced entity does not exist."""
+
+
+class ConflictError(TaskFlowError):
+    """The request conflicts with the current state, such as a duplicate email."""
+
+
+class InvalidCursorError(TaskFlowError):
+    """A pagination cursor could not be parsed.
+
+    Cursors arrive from user input, so a malformed one is an ordinary 4xx, not a bug.
+    """

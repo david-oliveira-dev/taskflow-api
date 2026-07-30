@@ -14,7 +14,10 @@ _BASE = {
 
 
 def _settings(**overrides: object) -> Settings:
-    return Settings(**{**_BASE, **overrides})  # type: ignore[arg-type]
+    # _env_file=None is not a detail: without it these tests read whatever .env happens to
+    # exist on the machine, and "does a missing value fail?" would pass or fail depending
+    # on whether the developer had run the app locally.
+    return Settings(_env_file=None, **{**_BASE, **overrides})  # type: ignore[arg-type]
 
 
 def test_signing_key_is_not_exposed_in_repr() -> None:
@@ -80,7 +83,7 @@ def test_unknown_variable_is_rejected() -> None:
 
 def test_missing_required_value_fails_at_construction() -> None:
     with pytest.raises(ValidationError):
-        Settings(redis_url="redis://localhost:6379/0", jwt_secret=_SECRET)
+        Settings(_env_file=None, redis_url="redis://localhost:6379/0", jwt_secret=_SECRET)
 
 
 @pytest.mark.parametrize("ttl", [0, 61])

@@ -17,6 +17,8 @@ from taskflow_api.main import create_app
 def settings() -> Settings:
     """Settings with placeholder values, valid enough to build the app."""
     return Settings(
+        # Ignore any .env on the machine: unit tests must be identical everywhere.
+        _env_file=None,
         environment="local",
         database_url="postgresql+asyncpg://user:pass@localhost:5432/taskflow",
         redis_url="redis://localhost:6379/0",

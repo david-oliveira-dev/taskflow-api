@@ -67,6 +67,9 @@ packages = ["src/taskflow_api"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# Alembic writes these files; reformatting machine-generated migrations churns the diff
+# and buys nothing. migrations/env.py is hand-written and stays linted.
+extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = [
@@ -92,7 +95,8 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+files = ["src", "tests", "migrations/env.py"]
+exclude = ["migrations/versions"]
 strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
