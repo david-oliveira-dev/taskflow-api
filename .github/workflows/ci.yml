@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: lint + typecheck + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Ruff (lint)
+        run: uv run ruff check .
+
+      - name: Ruff (format)
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy
+
+      # Integration tests start Postgres and Redis through testcontainers, which needs a
+      # Docker daemon. The ubuntu-latest runner has one, so the whole suite runs here.
+      - name: Tests
+        run: uv run pytest --cov-report=xml
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.xml
+
+  docker:
+    name: build image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Build only — pushing an image is a separate decision, made later.
+      - name: Build
+        run: docker build -t taskflow-api:ci .
+
+      - name: Smoke-test the image
+        run: |
+          docker run -d --name taskflow \
+            -e DATABASE_URL='postgresql+asyncpg://u:p@localhost:5432/d' \
+            -e REDIS_URL='redis://localhost:6379/0' \
+            -e JWT_SECRET='ci-only-value' \
+            -p 8000:8000 taskflow-api:ci
+          # The liveness probe touches no dependency, so it must answer even with no
+          # Postgres and no Redis anywhere. If this fails, /health is doing too much.
+          for i in $(seq 1 20); do
+            if curl -fsS localhost:8000/health; then echo; exit 0; fi
+            sleep 1
+          done
+          echo "health check never answered"; docker logs taskflow; exit 1
