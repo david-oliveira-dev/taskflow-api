@@ -1,0 +1,35 @@
+# INVARIANT: the `rev` of each mirrored tool must match the version in uv.lock.
+# When they drift, the hook passes locally and CI rejects the very same files — which is
+# exactly what broke the CI of projects 01-03. On every dependency bump, update both.
+#   uv.lock: ruff 0.16.0 · mypy 2.3.0
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # mypy runs through uv rather than a mirrored hook so that it type-checks against the
+  # project's real, locked dependencies. A mirrored hook installs its own island of stubs
+  # and reports import-not-found for packages that are plainly installed.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

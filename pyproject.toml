@@ -1,0 +1,117 @@
+[project]
+name = "taskflow-api"
+version = "0.1.0"
+description = "REST API for projects and tasks, built to demonstrate audit trails, idempotency and rate limiting done correctly."
+readme = "README.md"
+# Pinned to a single version on purpose: this is a service, not a library, so there is no
+# reason to carry the cost of a version matrix (general standard, section 1).
+requires-python = "==3.12.*"
+license = { file = "LICENSE" }
+authors = [{ name = "David Oliveira", email = "davidoliveira.devbr@gmail.com" }]
+keywords = ["fastapi", "postgresql", "rest-api", "jwt", "idempotency", "rate-limiting", "audit-log"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "redis>=5.2",
+    "structlog>=24.4",
+    "argon2-cffi>=23.1",
+    # PyJWT over python-jose: actively maintained, and it does not drag in a second
+    # cryptography stack we would never use. See docs/adr/0001-framework-and-stack.md.
+    "pyjwt>=2.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/david-oliveira-dev/taskflow-api"
+Repository = "https://github.com/david-oliveira-dev/taskflow-api"
+Changelog = "https://github.com/david-oliveira-dev/taskflow-api/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "testcontainers[postgres,redis]>=4.9",
+    "ruff>=0.16",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/taskflow_api"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pyflakes / pycodestyle
+    "I",             # isort
+    "N",             # pep8-naming
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "C4",            # comprehensions
+    "SIM",           # simplify
+    "ASYNC",         # async correctness — this project is async end to end
+    "S",             # bandit
+    "T20",           # no print()
+    "RUF",
+]
+ignore = [
+    "S101",  # assert is how pytest works
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may hardcode fake credentials and use them freely.
+"tests/**" = ["S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-q --cov=taskflow_api --cov-report=term-missing --cov-fail-under=80"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    # Integration tests spin up Postgres and Redis containers, so they need Docker and
+    # a locally cached image. Unit tests stay offline and deterministic:
+    #   pytest -m "not integration"
+    "integration: requires Docker (Postgres/Redis via testcontainers)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/taskflow_api"]
