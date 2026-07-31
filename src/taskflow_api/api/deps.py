@@ -35,9 +35,15 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 
     The boundary is the request, not the repository call: a handler that writes an entity
     and its audit entry must have both or neither.
+
+    The session is published on `request.state` so that `TransactionalRoute` can commit it
+    while the response still exists but has not been sent. The commit below stays as a
+    backstop for any route not built on that class — arriving late is recoverable, never
+    arriving is not.
     """
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with factory() as session:
+        request.state.session = session
         try:
             yield session
         except Exception:

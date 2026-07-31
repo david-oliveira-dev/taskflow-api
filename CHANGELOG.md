@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handlers no longer fetch it a second time.
 - Keyset pagination moved into `repositories/base.py` and is shared by every listing.
 
+### Fixed
+- The request transaction now commits **before** the response is sent. It previously
+  committed in the teardown of the session dependency, which FastAPI runs after the
+  response has already reached the client: `POST /auth/register` answered 201 and the
+  immediately following login failed with 401, ten times out of ten, and a freshly created
+  project answered 404 on the next request. The whole test suite was structurally blind to
+  this, because `httpx`'s ASGI transport awaits the teardown before returning. Fixed with
+  `TransactionalRoute` and pinned by a regression test that runs a live server on a socket.
+  See `docs/adr/0006-commit-before-the-response-is-sent.md`.
+
 ### Security
 - The audit trail is append-only: `AuditRepository` exposes no update or delete, and
   `GET /audit` is restricted to global administrators because the trail spans every

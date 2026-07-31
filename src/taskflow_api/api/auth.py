@@ -6,11 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from taskflow_api.api.deps import CurrentUserDep, SessionDep, SettingsDep
+from taskflow_api.api.routing import TransactionalRoute
 from taskflow_api.api.schemas import RegisterRequest, TokenResponse, UserResponse
 from taskflow_api.exceptions import AuthenticationError, ConflictError
 from taskflow_api.services.auth import AuthService
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"], route_class=TransactionalRoute)
 
 
 @router.post(

@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from taskflow_api.api.deps import PageParamsDep, SessionDep, require_global_role
+from taskflow_api.api.routing import TransactionalRoute
 from taskflow_api.api.schemas import AuditEntryResponse, PageResponse
 from taskflow_api.enums import AuditEntity, GlobalRole
 from taskflow_api.services.audit import AuditService
@@ -23,6 +24,7 @@ router = APIRouter(
     prefix="/audit",
     tags=["audit"],
     dependencies=[Depends(require_global_role(GlobalRole.ADMIN))],
+    route_class=TransactionalRoute,
 )
 
 
