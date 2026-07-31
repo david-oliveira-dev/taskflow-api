@@ -15,8 +15,14 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
+
+from taskflow_api.config import Settings
+from taskflow_api.db.session import create_session_factory
+from taskflow_api.main import create_app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,3 +68,35 @@ async def session(migrated_dsn: str) -> AsyncIterator[AsyncSession]:
     await transaction.rollback()
     await connection.close()
     await engine.dispose()
+
+
+@pytest.fixture
+async def app(migrated_dsn: str) -> AsyncIterator[FastAPI]:
+    """An app wired to the containerised database.
+
+    The app's own lifespan is bypassed so the engine can be pointed at the test container;
+    everything downstream of `app.state` behaves exactly as it does in production.
+    """
+    settings = Settings(
+        _env_file=None,
+        environment="local",
+        database_url=migrated_dsn,
+        redis_url="redis://localhost:6379/0",
+        jwt_secret="an-integration-test-key-long-enough-for-hs256",
+    )
+    built = create_app(settings)
+    engine = create_async_engine(migrated_dsn)
+    built.state.settings = settings
+    built.state.engine = engine
+    built.state.session_factory = create_session_factory(engine)
+
+    yield built
+
+    await engine.dispose()
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
+    """An HTTP client bound to the app in-process, with no socket involved."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac

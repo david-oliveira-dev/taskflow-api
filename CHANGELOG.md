@@ -32,7 +32,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Authorisation dependencies: `get_current_user`, `require_global_role` and
   `require_project_role`, the last resolving the caller's membership from the path.
 
+- Projects: `GET|POST /projects` and `GET|PATCH|DELETE /projects/{id}`, with cursor
+  pagination on the listing and archived projects hidden unless asked for.
+- Membership: `GET|POST /projects/{id}/members` and
+  `PATCH|DELETE /projects/{id}/members/{user_id}`, restricted to project owners.
+- Audit trail written inside the same transaction as every mutation it describes, plus
+  `GET /audit` for global administrators, filterable by entity and cursor-paginated.
+- Domain rules as pure functions in `services/rules.py`, unit-tested without a database:
+  archived projects reject writes, the only owner cannot be removed or demoted, a member
+  must be an existing active account, and a patch that changes nothing records nothing.
+- Removing a member clears their assignee on that project's tasks rather than deleting the
+  work, and the audit entry records how many tasks were affected.
+- Domain errors are mapped to statuses centrally in `api/errors.py` instead of in each
+  handler; an error the edge does not recognise stays a 500 and its message is not echoed.
+
+### Changed
+- `require_project_role` now returns a `ProjectAccess` carrying the loaded project, so
+  handlers no longer fetch it a second time.
+- Keyset pagination moved into `repositories/base.py` and is shared by every listing.
+
 ### Security
+- The audit trail is append-only: `AuditRepository` exposes no update or delete, and
+  `GET /audit` is restricted to global administrators because the trail spans every
+  project.
+- A caller with no access to a project receives 404 rather than 403, so probing ids cannot
+  be used to discover which projects exist.
+- `PATCH` bodies reject unknown fields instead of ignoring them, and only an allowlist of
+  columns is writable.
 - `Settings.safe_database_url` / `safe_redis_url` mask credentials for logging.
   `PostgresDsn` and `RedisDsn` keep the password in plain text in their reprs, so logging
   a settings object would have leaked the database password into the log stream.

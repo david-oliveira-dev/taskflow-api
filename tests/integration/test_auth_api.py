@@ -6,53 +6,18 @@ denied for the reason intended.
 """
 
 import uuid
-from collections.abc import AsyncIterator
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from taskflow_api.config import Settings
 from taskflow_api.db.session import create_session_factory
 from taskflow_api.enums import GlobalRole, ProjectRole
-from taskflow_api.main import create_app
 
 pytestmark = pytest.mark.integration
 
 PASSWORD = "a-sufficiently-long-password"
-
-
-@pytest.fixture
-async def app(migrated_dsn: str) -> AsyncIterator[FastAPI]:
-    """An app wired to the containerised database.
-
-    The app's own lifespan is bypassed so the engine can be pointed at the test container;
-    everything downstream of `app.state` behaves exactly as in production.
-    """
-    settings = Settings(
-        _env_file=None,
-        environment="local",
-        database_url=migrated_dsn,
-        redis_url="redis://localhost:6379/0",
-        jwt_secret="an-integration-test-key-long-enough-for-hs256",
-    )
-    built = create_app(settings)
-    engine = create_async_engine(migrated_dsn)
-    built.state.settings = settings
-    built.state.engine = engine
-    built.state.session_factory = create_session_factory(engine)
-
-    yield built
-
-    await engine.dispose()
-
-
-@pytest.fixture
-async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
-    """An HTTP client bound to the app in-process, with no socket involved."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
 
 
 def _email() -> str:

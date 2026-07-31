@@ -3,14 +3,26 @@
 import uuid
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, Select, delete, func, literal, select, tuple_
+from sqlalchemy import CursorResult, Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from taskflow_api.db.models import Membership, Project
 from taskflow_api.enums import ProjectRole
 from taskflow_api.exceptions import ConflictError
-from taskflow_api.pagination import CursorPosition, Page, encode_cursor
+from taskflow_api.pagination import CursorPosition, Page
+from taskflow_api.repositories.base import after_position, paginate
+
+
+def _project_position(project: Project) -> CursorPosition:
+    return CursorPosition(created_at=project.created_at, entity_id=project.id)
+
+
+def _membership_position(membership: Membership) -> CursorPosition:
+    # Membership has no surrogate id, so `user_id` is the tie-breaker. It is unique within
+    # a project, which is all the total ordering needs.
+    return CursorPosition(created_at=membership.created_at, entity_id=membership.user_id)
 
 
 class ProjectRepository:
@@ -130,33 +142,34 @@ class ProjectRepository:
         if not include_archived:
             stmt = stmt.where(Project.is_archived.is_(False))
         if after is not None:
-            # Row comparison, not two chained conditions: this is what makes the index on
-            # (created_at, id) usable and keeps the ordering total, so no row is ever
-            # skipped or repeated between pages.
-            stmt = stmt.where(
-                tuple_(Project.created_at, Project.id)
-                < tuple_(literal(after.created_at), literal(after.entity_id))
-            )
+            stmt = stmt.where(after_position(Project.created_at, Project.id, after))
 
-        return await _paginate(self._session, stmt, limit)
+        return await paginate(self._session, stmt, limit=limit, position=_project_position)
 
+    async def list_members(
+        self, *, project_id: uuid.UUID, limit: int, after: CursorPosition | None = None
+    ) -> Page[Membership]:
+        """List a project's members, newest first.
 
-async def _paginate(
-    session: AsyncSession, stmt: Select[tuple[Project]], limit: int
-) -> Page[Project]:
-    """Run a keyset query and build the page.
+        The related `User` is eagerly loaded. Under asyncio a lazy load raises instead of
+        quietly issuing a query, so any caller reading `membership.user` would otherwise
+        blow up at serialisation time rather than here.
 
-    Fetches one row beyond the page to learn whether more exist, which avoids a second
-    `COUNT(*)` over the whole table just to answer "is there a next page?".
-    """
-    result = await session.execute(stmt.limit(limit + 1))
-    rows = list(result.scalars().all())
+        Args:
+            project_id: Whose members to list.
+            limit: Page size, already clamped by the caller.
+            after: Continue after this position.
 
-    has_more = len(rows) > limit
-    items = rows[:limit]
-    next_cursor = (
-        encode_cursor(CursorPosition(created_at=items[-1].created_at, entity_id=items[-1].id))
-        if has_more and items
-        else None
-    )
-    return Page(items=items, next_cursor=next_cursor, has_more=has_more)
+        Returns:
+            A page of memberships with their users loaded.
+        """
+        stmt: Select[tuple[Membership]] = (
+            select(Membership)
+            .where(Membership.project_id == project_id)
+            .options(selectinload(Membership.user))
+            .order_by(Membership.created_at.desc(), Membership.user_id.desc())
+        )
+        if after is not None:
+            stmt = stmt.where(after_position(Membership.created_at, Membership.user_id, after))
+
+        return await paginate(self._session, stmt, limit=limit, position=_membership_position)

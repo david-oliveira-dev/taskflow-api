@@ -26,6 +26,16 @@ class ConflictError(TaskFlowError):
     """The request conflicts with the current state, such as a duplicate email."""
 
 
+class BusinessRuleError(TaskFlowError):
+    """The request is well-formed but violates a domain invariant.
+
+    Distinct from `ConflictError`: a conflict is about the *state* the resource is in and
+    can be resolved by changing it, while this is about the request referring to something
+    that could never be valid — assigning a task to someone outside the project, adding a
+    member who does not exist. That difference is what maps one to 409 and the other to 422.
+    """
+
+
 class InvalidCursorError(TaskFlowError):
     """A pagination cursor could not be parsed.
 

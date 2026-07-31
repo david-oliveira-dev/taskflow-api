@@ -2,19 +2,22 @@
 
 import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine
+from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, Path, Request, status
+from fastapi import Depends, HTTPException, Path, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from taskflow_api.config import Settings
-from taskflow_api.db.models import Membership, User
+from taskflow_api.db.models import Membership, Project, User
 from taskflow_api.enums import GlobalRole, ProjectRole
-from taskflow_api.exceptions import AuthenticationError
+from taskflow_api.exceptions import AuthenticationError, InvalidCursorError
+from taskflow_api.pagination import CursorPosition, clamp_page_size, decode_cursor
 from taskflow_api.repositories.projects import ProjectRepository
 from taskflow_api.repositories.users import UserRepository
 from taskflow_api.services import security
+from taskflow_api.services.rules import effective_role
 
 # `auto_error=False` so a missing header reaches our own handler and produces the project's
 # error shape, instead of Starlette's default body.
@@ -113,41 +116,98 @@ def require_global_role(
     return dependency
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectAccess:
+    """The outcome of authorising a caller against one project.
+
+    Carries the project itself so handlers do not fetch it a second time — the dependency
+    has already loaded it in order to decide whether the caller may proceed.
+    """
+
+    project: Project
+    user: User
+    #: None when a global admin reaches the project without being a member.
+    membership: Membership | None
+    role: ProjectRole
+
+
 def require_project_role(
     required: ProjectRole,
-) -> Callable[..., Coroutine[Any, Any, Membership]]:
+) -> Callable[..., Coroutine[Any, Any, ProjectAccess]]:
     """Build a dependency that demands a role inside the project named in the path.
+
+    Archived projects still pass: they stay readable by id, and refusing writes to them is
+    the service layer's job, where the message can say why.
 
     Args:
         required: The minimum project role, using the ordering in `ProjectRole`.
 
     Returns:
-        A dependency returning the caller's membership, or raising 404/403.
+        A dependency returning the established access, or raising 404/403.
     """
 
     async def dependency(
         project_id: Annotated[uuid.UUID, Path()],
         user: CurrentUserDep,
         session: SessionDep,
-    ) -> Membership:
+    ) -> ProjectAccess:
         repo = ProjectRepository(session)
 
-        if await repo.get(project_id) is None:
+        project = await repo.get(project_id)
+        if project is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
         membership = await repo.get_membership(project_id=project_id, user_id=user.id)
-        if membership is None:
+        role = effective_role(
+            user=user,
+            membership_role=membership.project_role if membership is not None else None,
+        )
+        if role is None:
             # 404, not 403. Telling a stranger "you lack permission" confirms the project
             # exists, which turns id probing into a directory of everyone's projects.
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
-        if not membership.project_role.can_act_as(required):
+        if not role.can_act_as(required):
             # 403 here is fine: the caller already knows the project exists.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"This operation requires the {required} role in this project.",
             )
 
-        return membership
+        return ProjectAccess(project=project, user=user, membership=membership, role=role)
 
     return dependency
+
+
+@dataclass(frozen=True, slots=True)
+class PageParams:
+    """A validated request for one page of a listing."""
+
+    limit: int
+    after: CursorPosition | None
+
+
+def page_params(
+    cursor: Annotated[str | None, Query(description="Opaque token from a previous page.")] = None,
+    limit: Annotated[int | None, Query(ge=1, description="Page size.")] = None,
+) -> PageParams:
+    """Parse and bound the paging arguments.
+
+    Cursors come straight from the query string, so a malformed one is ordinary user input
+    and has to produce a 422 rather than an unhandled exception. The size is clamped rather
+    than rejected: an unbounded page is a denial-of-service vector that costs the database
+    far more than it costs the caller.
+
+    Raises:
+        HTTPException: 422 when the cursor cannot be parsed.
+    """
+    try:
+        after = decode_cursor(cursor) if cursor else None
+    except InvalidCursorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    return PageParams(limit=clamp_page_size(limit), after=after)
+
+
+PageParamsDep = Annotated[PageParams, Depends(page_params)]

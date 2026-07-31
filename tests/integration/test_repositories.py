@@ -296,19 +296,25 @@ class TestDatabaseGuarantees:
         base — so this pins the mapping in place.
         """
         user = await _make_user(session)
+        entity_id = uuid.uuid4()
         session.add(
             AuditLog(
                 actor_id=user.id,
                 actor_email=user.email,
                 action="task.created",
                 entity_type="task",
-                entity_id=uuid.uuid4(),
+                entity_id=entity_id,
                 details={"title": "Wire the relays"},
             )
         )
         await session.flush()
 
-        row = await session.execute(text('SELECT "metadata" FROM audit_log'))
+        # Anchored to the row this test wrote. An unqualified SELECT over `audit_log` only
+        # worked while nothing else populated the table, and the API tests now do.
+        row = await session.execute(
+            text('SELECT "metadata" FROM audit_log WHERE entity_id = :entity_id'),
+            {"entity_id": entity_id},
+        )
         assert row.scalar_one() == {"title": "Wire the relays"}
 
     async def test_a_project_cannot_reference_a_missing_owner(self, session: AsyncSession) -> None:

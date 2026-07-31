@@ -2,12 +2,17 @@
 
 import uuid
 
-from sqlalchemy import Select, literal, select, tuple_
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from taskflow_api.db.models import Task
 from taskflow_api.enums import TaskStatus
-from taskflow_api.pagination import CursorPosition, Page, encode_cursor
+from taskflow_api.pagination import CursorPosition, Page
+from taskflow_api.repositories.base import after_position, paginate
+
+
+def _position(task: Task) -> CursorPosition:
+    return CursorPosition(created_at=task.created_at, entity_id=task.id)
 
 
 class TaskRepository:
@@ -81,19 +86,6 @@ class TaskRepository:
         if status is not None:
             stmt = stmt.where(Task.status == status)
         if after is not None:
-            stmt = stmt.where(
-                tuple_(Task.created_at, Task.id)
-                < tuple_(literal(after.created_at), literal(after.entity_id))
-            )
+            stmt = stmt.where(after_position(Task.created_at, Task.id, after))
 
-        result = await self._session.execute(stmt.limit(limit + 1))
-        rows = list(result.scalars().all())
-
-        has_more = len(rows) > limit
-        items = rows[:limit]
-        next_cursor = (
-            encode_cursor(CursorPosition(created_at=items[-1].created_at, entity_id=items[-1].id))
-            if has_more and items
-            else None
-        )
-        return Page(items=items, next_cursor=next_cursor, has_more=has_more)
+        return await paginate(self._session, stmt, limit=limit, position=_position)

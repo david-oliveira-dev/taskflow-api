@@ -50,6 +50,32 @@ class TaskStatus(StrEnum):
     DONE = "done"
 
 
+class AuditEntity(StrEnum):
+    """The kind of thing an audit entry is about."""
+
+    PROJECT = "project"
+    MEMBERSHIP = "membership"
+    TASK = "task"
+    USER = "user"
+
+
+class AuditAction(StrEnum):
+    """What was done, as recorded in the audit trail.
+
+    The vocabulary is closed here even though `audit_log.action` is a plain VARCHAR. The
+    enum keeps the actions greppable and stops two spellings of one event from entering the
+    trail; leaving the column untyped means adding an action later is a code change rather
+    than a migration.
+    """
+
+    PROJECT_CREATED = "project.created"
+    PROJECT_UPDATED = "project.updated"
+    PROJECT_ARCHIVED = "project.archived"
+    MEMBER_ADDED = "member.added"
+    MEMBER_ROLE_CHANGED = "member.role_changed"
+    MEMBER_REMOVED = "member.removed"
+
+
 class IdempotencyStatus(StrEnum):
     """State of a recorded idempotent request.
 
