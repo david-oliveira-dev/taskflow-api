@@ -74,6 +74,9 @@ class AuditAction(StrEnum):
     MEMBER_ADDED = "member.added"
     MEMBER_ROLE_CHANGED = "member.role_changed"
     MEMBER_REMOVED = "member.removed"
+    TASK_CREATED = "task.created"
+    TASK_UPDATED = "task.updated"
+    TASK_DELETED = "task.deleted"
 
 
 class IdempotencyStatus(StrEnum):

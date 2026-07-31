@@ -53,6 +53,16 @@ class TaskRepository:
         """Return a task by id, or None."""
         return await self._session.get(Task, task_id)
 
+    async def delete(self, task: Task) -> None:
+        """Remove a task for good.
+
+        Tasks are the one entity deleted physically rather than flagged. They are cheap,
+        there is nothing to archive, and the audit entry keeps the record of what was
+        removed — which is why the service writes the title into it before calling this.
+        """
+        await self._session.delete(task)
+        await self._session.flush()
+
     async def unassign_all_for_user(self, *, project_id: uuid.UUID, user_id: uuid.UUID) -> int:
         """Clear the assignee on every task in a project assigned to a user.
 

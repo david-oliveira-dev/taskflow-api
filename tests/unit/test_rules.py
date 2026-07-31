@@ -10,8 +10,8 @@ import uuid
 
 import pytest
 
-from taskflow_api.db.models import Project, User
-from taskflow_api.enums import GlobalRole, ProjectRole
+from taskflow_api.db.models import Membership, Project, User
+from taskflow_api.enums import GlobalRole, ProjectRole, TaskStatus
 from taskflow_api.exceptions import BusinessRuleError, ConflictError
 from taskflow_api.services import rules
 
@@ -73,6 +73,45 @@ class TestEnsureCanBeMember:
     def test_a_deactivated_account_is_rejected(self) -> None:
         with pytest.raises(BusinessRuleError, match="deactivated"):
             rules.ensure_can_be_member(_user(active=False))
+
+
+class TestEnsureAssigneeIsMember:
+    def test_a_member_may_be_assigned(self) -> None:
+        rules.ensure_assignee_is_member(
+            assignee_id=uuid.uuid4(), membership=Membership(project_role=ProjectRole.VIEWER)
+        )
+
+    def test_a_non_member_may_not(self) -> None:
+        """Work handed to someone who cannot open the project is work nobody will do.
+
+        It also leaks the project's existence to an outsider.
+        """
+        with pytest.raises(BusinessRuleError, match="must be a member"):
+            rules.ensure_assignee_is_member(assignee_id=uuid.uuid4(), membership=None)
+
+    def test_unassigning_is_always_allowed(self) -> None:
+        """The `None` case is how a departing member's work is released, not an error."""
+        rules.ensure_assignee_is_member(assignee_id=None, membership=None)
+
+
+class TestJsonSafe:
+    def test_uuids_become_strings(self) -> None:
+        """Audit details go through `json.dumps`, which has never heard of a UUID."""
+        assignee = uuid.uuid4()
+
+        safe = rules.json_safe({"assignee_id": {"from": None, "to": assignee}})
+
+        assert safe == {"assignee_id": {"from": None, "to": str(assignee)}}
+
+    def test_enum_members_survive_as_their_values(self) -> None:
+        safe = rules.json_safe({"status": {"from": TaskStatus.TODO, "to": TaskStatus.DONE}})
+
+        assert safe["status"]["to"] == "done"
+
+    def test_ordinary_values_are_untouched(self) -> None:
+        safe = rules.json_safe({"priority": {"from": 3, "to": 1}})
+
+        assert safe == {"priority": {"from": 3, "to": 1}}
 
 
 class TestEffectiveRole:

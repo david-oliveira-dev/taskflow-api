@@ -12,7 +12,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from taskflow_api.db.models import AuditLog, Membership, User
-from taskflow_api.enums import GlobalRole, ProjectRole
+from taskflow_api.enums import GlobalRole, ProjectRole, TaskStatus
 
 
 class Request(BaseModel):
@@ -156,6 +156,56 @@ class MemberResponse(BaseModel):
             project_role=membership.project_role,
             created_at=membership.created_at,
         )
+
+
+class TaskCreateRequest(Request):
+    """Payload for adding a task to a project."""
+
+    title: str = Field(min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=10_000)
+    status: TaskStatus = TaskStatus.TODO
+    # Bounded here as well as by the database CHECK. The constraint is the guarantee; this
+    # is what turns a violation into a 422 that names the field instead of a 500.
+    priority: int = Field(default=3, ge=1, le=5)
+    assignee_id: uuid.UUID | None = None
+
+
+class TaskUpdateRequest(Request):
+    """Payload for a partial task update.
+
+    As with projects, every field is optional and the service receives
+    `model_dump(exclude_unset=True)`: omitting `assignee_id` leaves it alone, sending it as
+    null unassigns the task, and those are different requests.
+    """
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=10_000)
+    status: TaskStatus | None = None
+    priority: int | None = Field(default=None, ge=1, le=5)
+    assignee_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> Self:
+        """Reject an empty patch."""
+        if not self.model_fields_set:
+            raise ValueError("Provide at least one field to update.")
+        return self
+
+
+class TaskResponse(BaseModel):
+    """A task as the API exposes it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    description: str | None
+    status: TaskStatus
+    priority: int
+    assignee_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class AuditEntryResponse(BaseModel):

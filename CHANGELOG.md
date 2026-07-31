@@ -46,12 +46,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Domain errors are mapped to statuses centrally in `api/errors.py` instead of in each
   handler; an error the edge does not recognise stays a 500 and its message is not echoed.
 
+- Tasks: `GET|POST /projects/{id}/tasks` (cursor-paginated, filterable by status) and
+  `GET|PATCH|DELETE /tasks/{task_id}`. Creating and editing needs `editor`, reading needs
+  `viewer`, and a task id resolves to its project before authorisation runs — a caller with
+  no access gets 404 rather than 403, as on projects.
+- The assignee rule: a task can only be assigned to a member of its project (422
+  otherwise), and sending `assignee_id` as null unassigns it. Tasks in an archived project
+  are readable but not editable, and are deleted physically rather than flagged, with the
+  audit entry keeping the title so the trail still says what went.
+
 ### Changed
 - `require_project_role` now returns a `ProjectAccess` carrying the loaded project, so
   handlers no longer fetch it a second time.
 - Keyset pagination moved into `repositories/base.py` and is shared by every listing.
 
 ### Fixed
+- `Task` maps with `eager_defaults`, so the database-computed `updated_at` comes back with
+  the UPDATE itself. Without it the attribute is expired after a flush and serialising the
+  response triggers a lazy refresh, which under async SQLAlchemy raises `MissingGreenlet`
+  rather than quietly issuing a query. PostgreSQL fetches it with RETURNING, so the fix
+  costs no extra round trip.
 - Enum columns now store the member **value** and are guarded by the CHECK constraint this
   project always claimed they had. SQLAlchemy persists the member *name* by default, so the
   database held `OWNER` and `TODO` while the API spoke `owner` and `todo` — invisible

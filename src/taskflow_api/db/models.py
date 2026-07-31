@@ -158,9 +158,21 @@ class Membership(Base):
 
 
 class Task(Base):
-    """A unit of work inside a project."""
+    """A unit of work inside a project.
+
+    `updated_at` is computed by the database, which under asyncio has a consequence worth
+    stating: after an UPDATE the attribute is expired, and merely *reading* it — as response
+    serialisation does — would issue a lazy refresh. In async SQLAlchemy that raises
+    `MissingGreenlet` instead of quietly emitting a query. `eager_defaults` makes the UPDATE
+    fetch the new value with RETURNING in the same statement, so the object is complete when
+    the handler gets it, at no extra round trip on PostgreSQL.
+    """
 
     __tablename__ = "tasks"
+    # RUF012 asks for ClassVar; mypy then rejects it, because DeclarativeBase already
+    # declares __mapper_args__ as an instance variable. The dict is SQLAlchemy's own
+    # documented interface, so the rule is the thing that does not fit here.
+    __mapper_args__ = {"eager_defaults": True}  # noqa: RUF012
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(

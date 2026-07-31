@@ -10,11 +10,12 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from taskflow_api.config import Settings
-from taskflow_api.db.models import Membership, Project, User
+from taskflow_api.db.models import Membership, Project, Task, User
 from taskflow_api.enums import GlobalRole, ProjectRole
 from taskflow_api.exceptions import AuthenticationError, InvalidCursorError
 from taskflow_api.pagination import CursorPosition, clamp_page_size, decode_cursor
 from taskflow_api.repositories.projects import ProjectRepository
+from taskflow_api.repositories.tasks import TaskRepository
 from taskflow_api.repositories.users import UserRepository
 from taskflow_api.services import security
 from taskflow_api.services.rules import effective_role
@@ -181,6 +182,74 @@ def require_project_role(
             )
 
         return ProjectAccess(project=project, user=user, membership=membership, role=role)
+
+    return dependency
+
+
+@dataclass(frozen=True, slots=True)
+class TaskAccess:
+    """The outcome of authorising a caller against one task.
+
+    Carries the task's project because every task rule needs it — whether the project is
+    archived, and whether a nominated assignee belongs to it.
+    """
+
+    task: Task
+    project: Project
+    user: User
+    membership: Membership | None
+    role: ProjectRole
+
+
+def _task_not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+
+
+def require_task_role(required: ProjectRole) -> Callable[..., Coroutine[Any, Any, TaskAccess]]:
+    """Build a dependency that demands a role in the project owning the task in the path.
+
+    `/tasks/{task_id}` carries no project id, so authorisation has to go through the task to
+    reach the membership. That is why this exists next to `require_project_role` instead of
+    reusing it.
+
+    Args:
+        required: The minimum project role.
+
+    Returns:
+        A dependency returning the established access, or raising 404/403.
+    """
+
+    async def dependency(
+        task_id: Annotated[uuid.UUID, Path()],
+        user: CurrentUserDep,
+        session: SessionDep,
+    ) -> TaskAccess:
+        task = await TaskRepository(session).get(task_id)
+        if task is None:
+            raise _task_not_found()
+
+        projects = ProjectRepository(session)
+        project = await projects.get(task.project_id)
+        if project is None:  # pragma: no cover - the foreign key makes this unreachable
+            raise _task_not_found()
+
+        membership = await projects.get_membership(project_id=project.id, user_id=user.id)
+        role = effective_role(
+            user=user,
+            membership_role=membership.project_role if membership is not None else None,
+        )
+        if role is None:
+            # 404 for the same reason as on projects: a 403 would confirm this task exists,
+            # letting anyone map out other people's work by probing ids.
+            raise _task_not_found()
+
+        if not role.can_act_as(required):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This operation requires the {required} role in this project.",
+            )
+
+        return TaskAccess(task=task, project=project, user=user, membership=membership, role=role)
 
     return dependency
 
