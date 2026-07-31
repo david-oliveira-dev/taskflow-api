@@ -10,11 +10,13 @@ Two conventions apply throughout:
 - **Enums as VARCHAR with a CHECK constraint** (`native_enum=False`) rather than PostgreSQL
   ENUM types. Adding a value to a native enum needs `ALTER TYPE`, which cannot run inside a
   transaction on older servers and makes downgrades genuinely painful; a CHECK constraint is
-  just another constraint to Alembic.
+  just another constraint to Alembic. Both halves of that need saying out loud, because
+  SQLAlchemy's defaults give you neither — see `_enum_column`.
 """
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import (
     Boolean,
@@ -34,6 +36,38 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from taskflow_api.db.base import Base
 from taskflow_api.enums import GlobalRole, IdempotencyStatus, ProjectRole, TaskStatus
+
+
+def _enum_column(enum_type: type[StrEnum], *, name: str) -> Enum:
+    """A VARCHAR column holding an enum's **values**, guarded by a CHECK constraint.
+
+    Both keyword arguments override a SQLAlchemy default that is wrong for this service:
+
+    - `values_callable` — by default SQLAlchemy persists the member *name*, so the database
+      would hold `OWNER` and `TODO` while the API speaks `owner` and `todo`. Everything
+      round-trips, which is exactly why it survives testing; what breaks is every consumer
+      that is not this application. `SELECT ... WHERE status = 'done'` from psql, a report,
+      or a BI tool quietly matches nothing. For a service whose whole argument is an
+      auditable trail, the column has to read the way the API reads.
+    - `create_constraint` — defaults to False since SQLAlchemy 1.4, so `native_enum=False`
+      on its own produces a bare VARCHAR that accepts any string at all. The constraint this
+      module's docstring promises has to be asked for explicitly.
+
+    Args:
+        enum_type: The Python enum whose values the column accepts.
+        name: Constraint name, combined with the table name by the naming convention.
+
+    Returns:
+        The configured column type.
+    """
+    return Enum(
+        enum_type,
+        native_enum=False,
+        create_constraint=True,
+        length=16,
+        name=name,
+        values_callable=lambda enum: [member.value for member in enum],
+    )
 
 
 def _uuid_pk() -> Mapped[uuid.UUID]:
@@ -56,7 +90,7 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     global_role: Mapped[GlobalRole] = mapped_column(
-        Enum(GlobalRole, native_enum=False, length=16, name="global_role"),
+        _enum_column(GlobalRole, name="global_role"),
         default=GlobalRole.USER,
         nullable=False,
     )
@@ -115,7 +149,7 @@ class Membership(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
     )
     project_role: Mapped[ProjectRole] = mapped_column(
-        Enum(ProjectRole, native_enum=False, length=16, name="project_role"), nullable=False
+        _enum_column(ProjectRole, name="project_role"), nullable=False
     )
     created_at: Mapped[datetime] = _created_at()
 
@@ -135,7 +169,7 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus, native_enum=False, length=16, name="task_status"),
+        _enum_column(TaskStatus, name="task_status"),
         default=TaskStatus.TODO,
         nullable=False,
     )
@@ -210,7 +244,7 @@ class IdempotencyKey(Base):
     # be rejected, never answered with the first request's stored response.
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[IdempotencyStatus] = mapped_column(
-        Enum(IdempotencyStatus, native_enum=False, length=16, name="idempotency_status"),
+        _enum_column(IdempotencyStatus, name="idempotency_status"),
         default=IdempotencyStatus.IN_PROGRESS,
         nullable=False,
     )

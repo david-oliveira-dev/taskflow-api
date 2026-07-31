@@ -287,6 +287,64 @@ class TestDatabaseGuarantees:
         assert entry.actor_id is None
         assert entry.actor_email == "ada@example.com"
 
+    async def test_enums_are_stored_as_their_values_not_their_names(
+        self, session: AsyncSession
+    ) -> None:
+        """The database has to read the way the API reads.
+
+        SQLAlchemy persists the enum member *name* by default, which would put `USER` and
+        `TODO` in the columns while the API speaks `user` and `todo`. It round-trips
+        perfectly through the ORM — which is why nothing else catches it — and quietly
+        breaks every other consumer: `WHERE status = 'done'` from psql or a reporting tool
+        matches no rows.
+        """
+        user = await _make_user(session)
+        project = await ProjectRepository(session).create(name="Apollo", owner_id=user.id)
+        await TaskRepository(session).create(project_id=project.id, title="Ship it")
+
+        rows = await session.execute(
+            text("""
+                SELECT (SELECT global_role FROM users WHERE id = :user_id),
+                       (SELECT project_role FROM memberships WHERE user_id = :user_id),
+                       (SELECT status FROM tasks WHERE project_id = :project_id)
+            """),
+            {"user_id": user.id, "project_id": project.id},
+        )
+
+        assert rows.one() == ("user", "owner", "todo")
+
+    async def test_an_enum_column_rejects_a_value_outside_the_set(
+        self, session: AsyncSession
+    ) -> None:
+        """The CHECK constraint the module docstring promises actually exists.
+
+        `native_enum=False` alone does not create it — `create_constraint` has defaulted to
+        False since SQLAlchemy 1.4, which leaves a bare VARCHAR accepting any string at all.
+
+        Two of the three rejected values are `OWNER` and `TODO`, which is exactly what the
+        old name-based mapping wrote. So this also pins the storage format: if the columns
+        ever go back to holding names, the constraint stops them.
+        """
+        user = await _make_user(session)
+        project = await ProjectRepository(session).create(name="Apollo", owner_id=user.id)
+        task = await TaskRepository(session).create(project_id=project.id, title="Ship it")
+
+        rejected = [
+            (text("UPDATE users SET global_role = 'SUPERUSER' WHERE id = :id"), {"id": user.id}),
+            (
+                text("UPDATE memberships SET project_role = 'OWNER' WHERE user_id = :id"),
+                {"id": user.id},
+            ),
+            (text("UPDATE tasks SET status = 'TODO' WHERE id = :id"), {"id": task.id}),
+        ]
+
+        for statement, params in rejected:
+            # A savepoint per attempt: in PostgreSQL a failed statement aborts the whole
+            # transaction, so without one the second case could never run.
+            with pytest.raises(IntegrityError):
+                async with session.begin_nested():
+                    await session.execute(statement, params)
+
     async def test_audit_details_are_stored_in_the_metadata_column(
         self, session: AsyncSession
     ) -> None:

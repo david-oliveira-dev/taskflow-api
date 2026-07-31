@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyset pagination moved into `repositories/base.py` and is shared by every listing.
 
 ### Fixed
+- Enum columns now store the member **value** and are guarded by the CHECK constraint this
+  project always claimed they had. SQLAlchemy persists the member *name* by default, so the
+  database held `OWNER` and `TODO` while the API spoke `owner` and `todo` — invisible
+  through the ORM, and silently wrong for every other reader: `WHERE status = 'done'` from
+  psql matched nothing. `native_enum=False` also does not create a constraint on its own
+  (`create_constraint` has defaulted to False since SQLAlchemy 1.4), so the columns were
+  bare VARCHARs accepting any string. Both are now set explicitly in `_enum_column`, the
+  initial migration was amended to match, and `upgrade head` / `downgrade base` were
+  re-verified against a populated database.
 - The request transaction now commits **before** the response is sent. It previously
   committed in the teardown of the session dependency, which FastAPI runs after the
   response has already reached the client: `POST /auth/register` answered 201 and the
