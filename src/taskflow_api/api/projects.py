@@ -20,7 +20,7 @@ from taskflow_api.api.deps import (
     SessionDep,
     require_project_role,
 )
-from taskflow_api.api.routing import TransactionalRoute
+from taskflow_api.api.idempotency import IdempotencyDep, IdempotentRoute
 from taskflow_api.api.schemas import (
     MemberAddRequest,
     MemberResponse,
@@ -33,7 +33,7 @@ from taskflow_api.api.schemas import (
 from taskflow_api.enums import ProjectRole
 from taskflow_api.services.projects import ProjectService
 
-router = APIRouter(prefix="/projects", tags=["projects"], route_class=TransactionalRoute)
+router = APIRouter(prefix="/projects", tags=["projects"], route_class=IdempotentRoute)
 
 ViewerAccess = Annotated[ProjectAccess, Depends(require_project_role(ProjectRole.VIEWER))]
 OwnerAccess = Annotated[ProjectAccess, Depends(require_project_role(ProjectRole.OWNER))]
@@ -61,7 +61,12 @@ async def list_projects(
     )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a project")
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a project",
+    dependencies=[IdempotencyDep],
+)
 async def create_project(
     payload: ProjectCreateRequest, user: CurrentUserDep, session: SessionDep
 ) -> ProjectResponse:
@@ -129,6 +134,7 @@ async def list_members(
     "/{project_id}/members",
     status_code=status.HTTP_201_CREATED,
     summary="Add a member",
+    dependencies=[IdempotencyDep],
 )
 async def add_member(
     payload: MemberAddRequest, access: OwnerAccess, session: SessionDep

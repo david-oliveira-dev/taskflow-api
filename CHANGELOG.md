@@ -55,10 +55,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are readable but not editable, and are deleted physically rather than flagged, with the
   audit entry keeping the title so the trail still says what went.
 
+- Idempotency: `POST` accepts an optional `Idempotency-Key`. A repeat with the same body
+  replays the original response (marked `Idempotent-Replay: true`); a key still in flight
+  answers 409 without waiting or reprocessing; a key reused with a different body answers
+  422. Serialised by the composite primary key on `(user_id, key)`, reserved in its own
+  transaction so concurrent callers see the conflict at once. Records expire after 24 hours
+  and `purge_expired()` sweeps them. See
+  `docs/adr/0007-idempotency-serialised-by-the-database.md`.
+- Rate limiting: a sliding window decided inside a single Lua script, so the count stays
+  exact under concurrency. Keyed per account where the caller is authenticated, per address
+  otherwise. Every response carries `X-RateLimit-Limit` / `-Remaining` / `-Reset`, and a 429
+  adds `Retry-After`. Redis unavailable means the request is allowed, logged as a warning
+  and marked `X-RateLimit-Degraded`. `/health` and `/ready` are exempt. See
+  `docs/adr/0008-rate-limiting-atomic-and-fail-open.md`.
+- A single error envelope on every failure —
+  `{"error": {"code", "message", "detail"}, "correlation_id"}` — with a stable, machine
+  readable `code` separate from the human `message`.
+- A correlation id per request, returned as `X-Correlation-Id` and echoed in every error
+  body. An inbound id is honoured so a trace survives across services, but only after being
+  validated: it reaches logs and responses, and unvalidated input there is how log forging
+  starts.
+- `GET /ready` checks Postgres and Redis and names each separately. Postgres down is 503;
+  Redis down is 200 and `degraded`, because the limiter fails open and the service still
+  works.
+
 ### Changed
 - `require_project_role` now returns a `ProjectAccess` carrying the loaded project, so
   handlers no longer fetch it a second time.
 - Keyset pagination moved into `repositories/base.py` and is shared by every listing.
+- Validation failures no longer echo the submitted value. Pydantic reports `input` by
+  default, which would reflect a rejected password into the response body and any log that
+  captures it.
 
 ### Fixed
 - `Task` maps with `eager_defaults`, so the database-computed `updated_at` comes back with

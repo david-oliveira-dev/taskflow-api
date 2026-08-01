@@ -21,7 +21,7 @@ from taskflow_api.api.deps import (
     require_project_role,
     require_task_role,
 )
-from taskflow_api.api.routing import TransactionalRoute
+from taskflow_api.api.idempotency import IdempotencyDep, IdempotentRoute
 from taskflow_api.api.schemas import (
     PageResponse,
     TaskCreateRequest,
@@ -31,7 +31,7 @@ from taskflow_api.api.schemas import (
 from taskflow_api.enums import ProjectRole, TaskStatus
 from taskflow_api.services.tasks import TaskService
 
-router = APIRouter(tags=["tasks"], route_class=TransactionalRoute)
+router = APIRouter(tags=["tasks"], route_class=IdempotentRoute)
 
 ProjectViewer = Annotated[ProjectAccess, Depends(require_project_role(ProjectRole.VIEWER))]
 ProjectEditor = Annotated[ProjectAccess, Depends(require_project_role(ProjectRole.EDITOR))]
@@ -67,6 +67,7 @@ async def list_tasks(
     "/projects/{project_id}/tasks",
     status_code=status.HTTP_201_CREATED,
     summary="Add a task to a project",
+    dependencies=[IdempotencyDep],
 )
 async def create_task(
     payload: TaskCreateRequest, access: ProjectEditor, session: SessionDep

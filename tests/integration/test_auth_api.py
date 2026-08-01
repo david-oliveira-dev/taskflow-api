@@ -130,6 +130,11 @@ class TestLogin:
 
         A different status, or a different message, would let anyone check whether an
         address has an account here.
+
+        The `error` object is compared rather than the whole body: since Phase 4 every
+        response also carries a per-request `correlation_id`, which differs by construction
+        and says nothing about the account. Comparing the part that could leak keeps the
+        test's teeth — a reworded message for one case still fails it.
         """
         email = _email()
         await _register(client, email)
@@ -142,7 +147,10 @@ class TestLogin:
         )
 
         assert wrong_password.status_code == unknown_email.status_code == 401
-        assert wrong_password.json() == unknown_email.json()
+        assert wrong_password.json()["error"] == unknown_email.json()["error"]
+        assert wrong_password.headers.get("www-authenticate") == unknown_email.headers.get(
+            "www-authenticate"
+        )
 
     async def test_deactivated_account_cannot_log_in(
         self, app: FastAPI, client: AsyncClient

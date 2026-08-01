@@ -36,6 +36,23 @@ class BusinessRuleError(TaskFlowError):
     """
 
 
+class IdempotencyInProgressError(TaskFlowError):
+    """The same `Idempotency-Key` is already being processed by a request in flight.
+
+    A sibling of `ConflictError` rather than a subclass: both become 409, but this one
+    carries its own code so a client can tell "retry in a moment, the first attempt is still
+    running" apart from "the resource is in a state that forbids this".
+    """
+
+
+class IdempotencyKeyReusedError(TaskFlowError):
+    """An `Idempotency-Key` was reused with a different request body.
+
+    Answering with the first request's stored response would tell the caller their payload
+    had been applied when it never was, which is worse than failing.
+    """
+
+
 class InvalidCursorError(TaskFlowError):
     """A pagination cursor could not be parsed.
 

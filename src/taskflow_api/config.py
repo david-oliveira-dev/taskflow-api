@@ -39,6 +39,12 @@ class Settings(BaseSettings):
         min_length=32, description="HMAC key for signing access tokens (>= 32 bytes)."
     )
     jwt_algorithm: Literal["HS256"] = "HS256"
+
+    # Rate limiting. Generous by default: the point is to stop a runaway client, not to
+    # shape ordinary traffic, and a limit tight enough to trip in normal use trains people
+    # to ignore 429s.
+    rate_limit_requests: int = Field(default=120, ge=1)
+    rate_limit_window_seconds: int = Field(default=60, ge=1)
     # Short-lived on purpose: this service has no refresh token and no revocation, so the
     # expiry window *is* the security boundary. See docs/adr/ (JWT decision).
     access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)

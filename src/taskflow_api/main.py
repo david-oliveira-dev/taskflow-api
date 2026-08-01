@@ -8,12 +8,18 @@ from fastapi import FastAPI
 from taskflow_api import __version__
 from taskflow_api.api.audit import router as audit_router
 from taskflow_api.api.auth import router as auth_router
+from taskflow_api.api.correlation import CorrelationIdMiddleware
 from taskflow_api.api.errors import install_error_handlers
 from taskflow_api.api.health import router as health_router
+from taskflow_api.api.idempotency import install_replay_handler
 from taskflow_api.api.projects import router as projects_router
+from taskflow_api.api.ratelimit import rate_limit_middleware
 from taskflow_api.api.tasks import router as tasks_router
 from taskflow_api.config import Settings, get_settings
+from taskflow_api.db.redis import create_redis
 from taskflow_api.db.session import create_engine, create_session_factory
+from taskflow_api.services.idempotency import IdempotencyStore
+from taskflow_api.services.ratelimit import RateLimiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -32,20 +38,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        """Own the engine for the life of the process.
+        """Own the engine and the Redis client for the life of the process.
 
         One engine, one connection pool, created at startup and disposed at shutdown.
-        Creating an engine per request would open a new pool per request, which exhausts
-        the database's connection limit under any real load.
+        Creating either per request would open a connection per request, which exhausts
+        the server's limit under any real load.
         """
         engine = create_engine(resolved)
+        redis = create_redis(resolved)
+        session_factory = create_session_factory(engine)
+
         app.state.settings = resolved
         app.state.engine = engine
-        app.state.session_factory = create_session_factory(engine)
+        app.state.redis = redis
+        app.state.session_factory = session_factory
+        app.state.idempotency = IdempotencyStore(session_factory)
+        app.state.rate_limiter = RateLimiter(
+            redis,
+            limit=resolved.rate_limit_requests,
+            window_seconds=resolved.rate_limit_window_seconds,
+        )
         try:
             yield
         finally:
             await engine.dispose()
+            await redis.aclose()
 
     app = FastAPI(
         title="TaskFlow API",
@@ -62,6 +79,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     install_error_handlers(app)
+    install_replay_handler(app)
+
+    # Order matters, and reads inside-out: the correlation id is added last so it is the
+    # outermost middleware, which means a request rejected by the rate limiter still
+    # carries an id a user can quote.
+    app.middleware("http")(rate_limit_middleware)
+    app.add_middleware(CorrelationIdMiddleware)
 
     app.include_router(health_router)
     app.include_router(auth_router)

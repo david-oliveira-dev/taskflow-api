@@ -17,12 +17,22 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from testcontainers.community.postgres import PostgresContainer
+from testcontainers.community.redis import RedisContainer
 
 from taskflow_api.config import Settings
+from taskflow_api.db.redis import create_redis
 from taskflow_api.db.session import create_session_factory
 from taskflow_api.main import create_app
+from taskflow_api.services.idempotency import IdempotencyStore
+from taskflow_api.services.ratelimit import RateLimiter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -70,29 +80,81 @@ async def session(migrated_dsn: str) -> AsyncIterator[AsyncSession]:
     await engine.dispose()
 
 
-@pytest.fixture
-async def app(migrated_dsn: str) -> AsyncIterator[FastAPI]:
-    """An app wired to the containerised database.
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    """Start Redis 7 and yield its URL.
 
-    The app's own lifespan is bypassed so the engine can be pointed at the test container;
-    everything downstream of `app.state` behaves exactly as it does in production.
+    Started per session like Postgres: on a mechanical disk the container start dominates
+    everything else, and each test uses its own key prefix rather than its own server.
     """
-    settings = Settings(
+    with RedisContainer("redis:7-alpine") as container:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(6379)
+        yield f"redis://{host}:{port}/0"
+
+
+#: Effectively unlimited, so ordinary tests never meet the limiter.
+#:
+#: Not a workaround for a broken limiter — the limiter is right, and that is the problem.
+#: Requests made through the ASGI transport carry no peer address, so every unauthenticated
+#: call in the suite (every register, every login) counts against the one `ip:unknown`
+#: bucket. At the production default of 120/minute the suite throttles itself, and the
+#: failure lands on whichever test happens to run at the wrong moment rather than on
+#: anything real.
+#:
+#: The limiter is exercised properly in `test_ratelimit_api.py`, which builds its own app
+#: with a small limit. Keeping that opt-in means changing the default can never quietly
+#: start breaking unrelated tests.
+UNTHROTTLED = 1_000_000
+
+
+@pytest.fixture
+def app_settings(migrated_dsn: str, redis_url: str) -> Settings:
+    """Settings pointed at both throwaway containers, with the limiter effectively off."""
+    return Settings(
         _env_file=None,
         environment="local",
         database_url=migrated_dsn,
-        redis_url="redis://localhost:6379/0",
+        redis_url=redis_url,
         jwt_secret="an-integration-test-key-long-enough-for-hs256",
+        rate_limit_requests=UNTHROTTLED,
     )
+
+
+def build_app(settings: Settings) -> tuple[FastAPI, AsyncEngine, Redis]:
+    """Wire an app to the test containers, bypassing its own lifespan.
+
+    The lifespan would build an engine and a client from the configured DSNs, which is
+    exactly right in production and wrong here — the fixtures own those. Everything
+    downstream of `app.state` behaves identically either way.
+    """
     built = create_app(settings)
-    engine = create_async_engine(migrated_dsn)
+    engine = create_async_engine(str(settings.database_url))
+    redis = create_redis(settings)
+    session_factory = create_session_factory(engine)
+
     built.state.settings = settings
     built.state.engine = engine
-    built.state.session_factory = create_session_factory(engine)
+    built.state.redis = redis
+    built.state.session_factory = session_factory
+    built.state.idempotency = IdempotencyStore(session_factory)
+    built.state.rate_limiter = RateLimiter(
+        redis,
+        limit=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    return built, engine, redis
+
+
+@pytest.fixture
+async def app(app_settings: Settings) -> AsyncIterator[FastAPI]:
+    """An app wired to the containerised database and Redis."""
+    built, engine, redis = build_app(app_settings)
 
     yield built
 
     await engine.dispose()
+    await redis.aclose()
 
 
 @pytest.fixture
