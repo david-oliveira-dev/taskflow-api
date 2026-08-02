@@ -106,4 +106,6 @@ def get_settings() -> Settings:
     Cached because parsing re-reads `.env` and re-validates every field; the FastAPI
     dependency graph would otherwise do that on every single request.
     """
-    return Settings()
+    # Every field comes from the environment, which Pyright cannot see — the reasoning
+    # is in the [tool.pyright] section of pyproject.toml.
+    return Settings()  # pyright: ignore[reportCallIssue]

@@ -18,7 +18,7 @@ def settings() -> Settings:
     """Settings with placeholder values, valid enough to build the app."""
     return Settings(
         # Ignore any .env on the machine: unit tests must be identical everywhere.
-        _env_file=None,
+        _env_file=None,  # pyright: ignore[reportCallIssue]  # see [tool.pyright] in pyproject.toml
         environment="local",
         database_url="postgresql+asyncpg://user:pass@localhost:5432/taskflow",
         redis_url="redis://localhost:6379/0",

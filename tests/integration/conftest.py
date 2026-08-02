@@ -112,7 +112,7 @@ UNTHROTTLED = 1_000_000
 def app_settings(migrated_dsn: str, redis_url: str) -> Settings:
     """Settings pointed at both throwaway containers, with the limiter effectively off."""
     return Settings(
-        _env_file=None,
+        _env_file=None,  # pyright: ignore[reportCallIssue]  # see [tool.pyright] in pyproject.toml
         environment="local",
         database_url=migrated_dsn,
         redis_url=redis_url,

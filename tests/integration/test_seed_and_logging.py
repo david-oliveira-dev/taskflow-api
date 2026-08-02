@@ -32,7 +32,7 @@ pytestmark = pytest.mark.integration
 def _json_logging() -> Settings:
     """Settings that force JSON output, so the assertions can parse the lines."""
     return Settings(
-        _env_file=None,
+        _env_file=None,  # pyright: ignore[reportCallIssue]  # see [tool.pyright] in pyproject.toml
         environment="ci",
         database_url="postgresql+asyncpg://u:p@localhost:5432/db",
         redis_url="redis://localhost:6379/0",

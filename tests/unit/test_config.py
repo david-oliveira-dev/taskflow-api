@@ -83,7 +83,13 @@ def test_unknown_variable_is_rejected() -> None:
 
 def test_missing_required_value_fails_at_construction() -> None:
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, redis_url="redis://localhost:6379/0", jwt_secret=_SECRET)
+        # Missing `database_url` on purpose — that is the point of the test, and it is
+        # also what Pyright objects to.
+        Settings(
+            _env_file=None,  # pyright: ignore[reportCallIssue]  # see [tool.pyright] in pyproject.toml
+            redis_url="redis://localhost:6379/0",
+            jwt_secret=_SECRET,
+        )
 
 
 @pytest.mark.parametrize("ttl", [0, 61])
