@@ -79,6 +79,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Redis down is 200 and `degraded`, because the limiter fails open and the service still
   works.
 
+- Structured logging with `structlog`: JSON in `ci` and `production`, human-readable
+  locally. Every line carries the request's correlation id, injected by a processor so no
+  call site has to remember it, and standard-library logs — SQLAlchemy, uvicorn — are routed
+  through the same pipeline. The access line records method, path, status and duration, and
+  deliberately nothing else: the query string carries tokens in the wild, the headers carry
+  `Authorization`, and the body is where passwords are.
+- `make seed` populates demo data — an administrator, the three project roles, a project and
+  tasks in different states. It writes through the service layer rather than the
+  repositories, so `GET /audit` has a real trail waiting; demo data with no trail would
+  undercut the point. Safe to re-run.
+- `docs/walkthrough.http` — the executable tour, ending on the three cross-cutting concerns.
+- `docs/architecture.md` — request-path and data-model diagrams, the layer contract, and
+  which orderings are load-bearing.
+- README rewritten around the four properties the project exists to demonstrate.
+
 ### Changed
 - `require_project_role` now returns a `ProjectAccess` carrying the loaded project, so
   handlers no longer fetch it a second time.

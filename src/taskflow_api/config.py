@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)
 
     @property
+    def log_json(self) -> bool:
+        """Whether logs should be JSON rather than human-readable.
+
+        A developer reading a terminal and a log shipper parsing a stream want opposite
+        things; local gets prose, everything deployed gets JSON.
+        """
+        return self.environment != "local"
+
+    @property
     def is_production(self) -> bool:
         """Whether the service runs with production guarantees (docs off, debug off)."""
         return self.environment == "production"

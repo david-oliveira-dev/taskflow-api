@@ -18,6 +18,7 @@ from taskflow_api.api.tasks import router as tasks_router
 from taskflow_api.config import Settings, get_settings
 from taskflow_api.db.redis import create_redis
 from taskflow_api.db.session import create_engine, create_session_factory
+from taskflow_api.observability import access_log_middleware, configure_logging
 from taskflow_api.services.idempotency import IdempotencyStore
 from taskflow_api.services.ratelimit import RateLimiter
 
@@ -35,6 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         A configured FastAPI application.
     """
     resolved = settings or get_settings()
+    configure_logging(resolved)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -81,10 +83,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_error_handlers(app)
     install_replay_handler(app)
 
-    # Order matters, and reads inside-out: the correlation id is added last so it is the
-    # outermost middleware, which means a request rejected by the rate limiter still
-    # carries an id a user can quote.
+    # Order matters, and reads inside-out — the last one added is the outermost. The
+    # correlation id has to wrap everything, so even a request rejected by the limiter
+    # carries an id a user can quote; the access log sits just inside it, so the line it
+    # writes already has that id attached.
     app.middleware("http")(rate_limit_middleware)
+    app.middleware("http")(access_log_middleware)
     app.add_middleware(CorrelationIdMiddleware)
 
     app.include_router(health_router)

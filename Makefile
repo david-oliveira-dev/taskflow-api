@@ -1,4 +1,4 @@
-.PHONY: help install up down check lint type test test-unit run clean
+.PHONY: help install up down migrate seed check lint type test test-unit run clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -11,6 +11,12 @@ up:  ## Start Postgres and Redis
 
 down:  ## Stop dependencies (keeps the data volume)
 	docker compose down
+
+migrate:  ## Apply database migrations
+	uv run alembic upgrade head
+
+seed:  ## Populate demo data (safe to re-run)
+	uv run python -m taskflow_api.seed
 
 check: lint type test  ## Everything CI runs
 

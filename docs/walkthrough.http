@@ -1,0 +1,259 @@
+###############################################################################
+# TaskFlow API — executable walkthrough
+#
+# Run it top to bottom. Every request is real; nothing here is illustrative.
+#
+#   make up && make migrate && make seed && make run
+#
+# Works with the REST Client extension for VS Code, the JetBrains HTTP client,
+# or `httpyac`. Each `###` is one request; variables carry between them.
+#
+# The point of the sequence is the last four blocks. A CRUD API is not
+# interesting — an audit trail that cannot be forged, a retry that cannot
+# double-charge, and a limiter that holds under concurrency are.
+###############################################################################
+
+@host = http://localhost:8000
+@password = demo-password-long-enough
+
+###############################################################################
+# 1. Liveness and readiness
+#
+# /health never touches a dependency: a database blip must not make the
+# orchestrator kill a healthy process. /ready does, and reports each one
+# separately, so an incident starts with a direction instead of a log search.
+###############################################################################
+
+### Liveness — answers even with Postgres and Redis unreachable
+GET {{host}}/health
+
+### Readiness — 503 if Postgres is down; Redis down is 200 + "degraded"
+GET {{host}}/ready
+
+###############################################################################
+# 2. Register and log in
+#
+# Note what a failed login does NOT tell you: unknown address and wrong
+# password produce the same status, the same body and the same timing.
+###############################################################################
+
+### Register a fresh account
+# @name register
+POST {{host}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "walkthrough@example.com",
+  "password": "{{password}}",
+  "full_name": "Walk Through"
+}
+
+### Log in as the seeded owner
+# @name login
+POST {{host}}/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=owner@example.com&password={{password}}
+
+@token = {{login.response.body.access_token}}
+
+### Who am I
+# @name me
+GET {{host}}/auth/me
+Authorization: Bearer {{token}}
+
+@ownerId = {{me.response.body.id}}
+
+### A wrong password — identical shape to an unknown address
+POST {{host}}/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=owner@example.com&password=definitely-not-the-password
+
+### An address with no account — compare the two responses
+POST {{host}}/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=nobody-at-all@example.com&password={{password}}
+
+###############################################################################
+# 3. Projects and membership
+###############################################################################
+
+### List the projects you belong to (cursor-paginated)
+# @name projects
+GET {{host}}/projects?limit=10
+Authorization: Bearer {{token}}
+
+@project = {{projects.response.body.items[0].id}}
+
+### Read one project
+GET {{host}}/projects/{{project}}
+Authorization: Bearer {{token}}
+
+### Its members — the seed gave them the three different roles
+GET {{host}}/projects/{{project}}/members
+Authorization: Bearer {{token}}
+
+### Invite the freshly registered account as an editor
+POST {{host}}/projects/{{project}}/members
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "user_id": "{{register.response.body.id}}",
+  "project_role": "editor"
+}
+
+### Removing the only owner is refused — it would leave a project nobody can
+### administer, including nobody who could appoint a replacement.
+DELETE {{host}}/projects/{{project}}/members/{{ownerId}}
+Authorization: Bearer {{token}}
+
+###############################################################################
+# 4. Tasks, and the assignee rule
+###############################################################################
+
+### List the project's tasks, filtered by status
+GET {{host}}/projects/{{project}}/tasks?status=todo
+Authorization: Bearer {{token}}
+
+### Create a task
+# @name task
+POST {{host}}/projects/{{project}}/tasks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Check the walkthrough still runs",
+  "priority": 2
+}
+
+### Assigning to somebody outside the project is 422, not a silent no-op.
+### Work handed to someone who cannot open the project is work nobody does —
+### and the assignment would leak the project's existence to them.
+PATCH {{host}}/tasks/{{task.response.body.id}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "assignee_id": "00000000-0000-0000-0000-000000000000"
+}
+
+###############################################################################
+# 5. TRANSVERSAL — idempotency
+#
+# Send the same POST twice with the same key. The second answers with the
+# FIRST response, marked `Idempotent-Replay: true`, and only one project is
+# created. Then send a third with the same key and a different body: 422,
+# because replying with the first response would tell the caller their payload
+# had been applied when it never was.
+###############################################################################
+
+### First attempt
+POST {{host}}/projects
+Authorization: Bearer {{token}}
+Idempotency-Key: walkthrough-key-001
+Content-Type: application/json
+
+{ "name": "Retried project" }
+
+### Same key, same body — replayed, NOT created again. Check the id.
+POST {{host}}/projects
+Authorization: Bearer {{token}}
+Idempotency-Key: walkthrough-key-001
+Content-Type: application/json
+
+{ "name": "Retried project" }
+
+### Same key, different body — 422 idempotency_key_reused
+POST {{host}}/projects
+Authorization: Bearer {{token}}
+Idempotency-Key: walkthrough-key-001
+Content-Type: application/json
+
+{ "name": "A completely different project" }
+
+### Confirm it exists exactly once
+GET {{host}}/projects?limit=100
+Authorization: Bearer {{token}}
+
+###############################################################################
+# 6. TRANSVERSAL — rate limiting
+#
+# Every response carries X-RateLimit-Limit / -Remaining / -Reset, so a client
+# can back off before hitting the wall. To see a 429 without waiting, restart
+# the API with a small limit:
+#
+#   RATE_LIMIT_REQUESTS=3 make run
+#
+# then send this a few times. The 429 carries Retry-After and the same error
+# envelope as everything else — including a correlation id, so even a
+# throttled request is one a user can report.
+#
+# /health and /ready are exempt: a probe throttled by the traffic it exists to
+# survive gets the container killed in the middle of an incident.
+###############################################################################
+
+### Watch X-RateLimit-Remaining fall with each call
+GET {{host}}/auth/me
+Authorization: Bearer {{token}}
+
+### Still 200 no matter how throttled you are
+GET {{host}}/health
+
+###############################################################################
+# 7. TRANSVERSAL — the audit trail
+#
+# Every mutation above left an entry, written in the same transaction as the
+# change itself: a rejected request leaves nothing behind. `actor_email` is
+# denormalised at write time, so an entry still names its author after the
+# account is gone.
+#
+# Admin only — the trail spans every project, so exposing it to ordinary users
+# would leak the existence and membership of projects they cannot see.
+###############################################################################
+
+### As the owner: 403, even though they made most of these changes
+GET {{host}}/audit
+Authorization: Bearer {{token}}
+
+### Log in as the seeded administrator
+# @name adminLogin
+POST {{host}}/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=admin@example.com&password={{password}}
+
+@adminToken = {{adminLogin.response.body.access_token}}
+
+### The whole trail, newest first
+GET {{host}}/audit?limit=20
+Authorization: Bearer {{adminToken}}
+
+### Narrowed to one project — uses the composite index on (entity_type, entity_id)
+GET {{host}}/audit?entity_type=project&entity_id={{project}}
+Authorization: Bearer {{adminToken}}
+
+###############################################################################
+# 8. The error envelope
+#
+# One shape for every failure, with a stable machine-readable `code` kept
+# separate from the human `message`, and the correlation id that also comes
+# back as the X-Correlation-Id header.
+###############################################################################
+
+### 404 — and note the id in both the body and the headers
+GET {{host}}/projects/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{token}}
+
+### 422 — per-field detail, with the submitted value deliberately absent
+POST {{host}}/projects
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "" }
+
+### Bring your own correlation id and it comes back unchanged
+GET {{host}}/health
+X-Correlation-Id: my-trace-0001
