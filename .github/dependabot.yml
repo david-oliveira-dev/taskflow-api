@@ -15,3 +15,17 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # The base image's Python is pinned to match `requires-python = "==3.12.*"`, so a
+      # major or minor bump here does not update the project — it breaks it. Dependabot
+      # opened exactly that PR on the first day and CI caught it:
+      #
+      #   error: No interpreter found for Python ==3.12.* in managed installations
+      #
+      # Patch updates are still wanted; those carry the security fixes and leave the
+      # interpreter version alone. Moving to a new Python is a deliberate change to the
+      # pin, the lock and the CI matrix, not something to accept from a bot.
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
