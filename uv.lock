@@ -886,7 +886,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.16" },
-    { name = "testcontainers", extras = ["postgres", "redis"], specifier = ">=4.9" },
+    { name = "testcontainers", extras = ["postgres", "redis"], specifier = ">=4.15.0" },
 ]
 
 [[package]]
