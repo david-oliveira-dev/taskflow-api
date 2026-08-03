@@ -1,0 +1,31 @@
+# gitleaks configuration
+#
+# Everything silenced here was triaged by hand and is listed with its reason. Nothing is a
+# blanket exemption for a directory: allowlisting `tests/**` would mean a real secret pasted
+# into a test file slips through for ever, which is the failure mode a secret scanner exists
+# to prevent. The rules below match the *values* of documented placeholders, so a genuine
+# credential in the same file is still reported.
+#
+# Run it over the whole history with:
+#     gitleaks detect --source . --redact --verbose
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Hand-triaged placeholders that are not credentials"
+
+regexes = [
+  # Signing keys used by the test suite. The values say what they are; they only have enough
+  # entropy to trip the generic rule because `Settings.jwt_secret` enforces the RFC 7518 §3.2
+  # floor of 32 bytes, so a short obvious dummy would stop the service from starting.
+  '''(a|an)-(test|integration-test)-(signing-)?key-long-enough-for-hs256''',
+
+  # `Idempotency-Key` values in docs/walkthrough.http. An idempotency key is a request
+  # identifier the client invents — it grants nothing and is meant to be read.
+  '''walkthrough-key-\d+''',
+
+  # The demo password printed by `make seed`, deliberately public. Whoever evaluates this
+  # project is supposed to log in with it.
+  '''demo-password-long-enough''',
+]
