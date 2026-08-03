@@ -2,7 +2,7 @@
 # resulting virtualenv and source are copied into the runtime image. The final image
 # carries no uv, no build toolchain and no lockfile.
 
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -22,7 +22,7 @@ COPY README.md LICENSE ./
 RUN uv sync --frozen --no-dev
 
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Non-root, no login shell, no home directory to write into.
 RUN groupadd --system --gid 1001 taskflow \
