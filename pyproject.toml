@@ -48,7 +48,7 @@ dev = [
     "pytest-cov>=6.0",
     "httpx>=0.28",
     "testcontainers[postgres,redis]>=4.15.0",
-    "ruff>=0.16",
+    "ruff>=0.16.1",
     "mypy>=1.13",
     "pre-commit>=4.0",
 ]
